@@ -1,4 +1,4 @@
-name: Build Flutter APK
+name: Build iOS IPA
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -18,11 +18,20 @@ jobs:
         
     - run: flutter pub get
     
-    # دروستکردنی ئەپی ئەندرۆید بێ کێشە
-    - run: flutter build apk --release
+    # دروستکردنی فایلی IPA بێ واژۆی توندی پەرەپێدەر (Development build)
+    - run: flutter build ios --release --no-codesign
     
-    - name: Upload APK
+    # کۆکردنەوە و ئامادەکردنی بۆ داگرتن
+    - run: |
+        cd build/ios/iphoneos
+        mkdir Payload
+        cd Payload
+        ln -s ../Runner.app
+        cd ..
+        zip -r app-release.ipa Payload
+        
+    - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
-        name: app-release
-        path: build/app/outputs/flutter-apk/app-release.apk
+        name: app-release-ipa
+        path: build/ios/iphoneos/app-release.ipa
