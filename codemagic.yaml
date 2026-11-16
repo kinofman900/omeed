@@ -1,35 +1,53 @@
-workflows:
+Workflows:
   ios-workflow:
-    name: iOS Workflow
+    name: Kurdistan Map - iOS IPA
     max_build_duration: 120
     instance_type: mac_mini_m2
+
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+
     scripts:
       - name: Get Flutter packages
-        script: flutter pub get
-      - name: Build ios
-        scripts:
-      - name: Get Flutter packages
-        script: flutter pub get
-      - name: Build ios
+        script: |
+          flutter pub get
+
+      - name: Build iOS Release
         script: |
           flutter build ios --release --no-codesign
-          cd build/ios/iphoneos
-          mkdir Payload
-          cd Payload
-          ln -s ../Runner.app
-          cd ..
-          zip -r app.ipa Payload
-    artifacts:
-      - build/ios/ipa/*.ipa
 
-triggers:
-  publishing: false
+      - name: Create IPA file
+        script: |
+          set -e
+
+          cd build/ios/iphoneos
+
+          if [ ! -d "Runner.app" ]; then
+            echo "ERROR: Runner.app not found!"
+            exit 1
+          fi
+
+          rm -rf Payload app.ipa
+
+          mkdir -p Payload
+
+          cp -R Runner.app Payload/
+
+          zip -qry KurdistanMap.ipa Payload
+
+          echo "SUCCESS: KurdistanMap.ipa created!"
+
+          ls -lh KurdistanMap.ipa
+
+    artifacts:
+      - build/ios/iphoneos/KurdistanMap.ipa
+
+triggering:
   events:
     - push
   branch_patterns:
     - pattern: main
       include: true
+      source: true
