@@ -15,7 +15,8 @@ workflows:
           flutter build ios --release --no-codesign
     artifacts:
       - build/ios/ipa/*.ipa
-      triggers:
+
+triggers:
   publishing: false
   events:
     - push
