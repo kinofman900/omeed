@@ -28,8 +28,9 @@ class MapboxConfig {
       return 'https://server.arcgisonline.com/ArcGIS/rest/services/'
           'World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
     }
-    // CARTO Voyager: بە {r} ڕەزولیوشنی ڕێتینا (@2x) وەردەگرێت — زۆر ڕوونترە لە OSM.
-    return 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/'
+    // CARTO Voyager بێ ناو (nolabels) + ڕێتینا (@2x): ناوەکان لەلایەن
+    // ئەپەکەوە بە زمانی هەڵبژێردراو دەکێشرێن، بۆیە دووبارە و تێکەڵ نابن.
+    return 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/'
         '{z}/{x}/{y}{r}.png';
   }
 }

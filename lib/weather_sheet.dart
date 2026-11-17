@@ -538,6 +538,7 @@ class WeatherSheet extends StatefulWidget {
     this.title,
     this.onClose,
     this.embedded = false,
+    this.startInSearch = false,
   });
   final LatLng point;
   final String? title;
@@ -547,6 +548,9 @@ class WeatherSheet extends StatefulWidget {
 
   /// True when shown as a tab inside the app shell (fills the given height).
   final bool embedded;
+
+  /// کردنەوەی پانێڵ ڕاستەوخۆ بە دۆخی گەڕان
+  final bool startInSearch;
 
   @override
   State<WeatherSheet> createState() => _WeatherSheetState();
@@ -588,6 +592,7 @@ class _WeatherSheetState extends State<WeatherSheet>
   void initState() {
     super.initState();
     _title = widget.title;
+    _searchMode = widget.startInSearch;
     SavedPlacesStore.instance.addListener(_onSaved);
     unawaited(SavedPlacesStore.instance.load());
     _loadPrefs();

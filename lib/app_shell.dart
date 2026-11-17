@@ -15,6 +15,7 @@ import 'navigation.dart';
 import 'tactical.dart';
 import 'weather_sheet.dart';
 import 'weather_layers.dart';
+import 'saved_places.dart';
 
 // ───────────────────────── دەقەکان (ckb / ar / en) ─────────────────────────
 // bdn (بادینی) بۆ ckb دەگەڕێتەوە ئەگەر وەرگێڕانی جیا نەبێت.
@@ -27,7 +28,9 @@ const Map<String, Map<String, String>> _txt = {
     'rl_moderate': 'ناوەند',
     'rl_heavy': 'قورس',
     'rl_extreme': 'زۆر قورس',
-    'weather_hint': 'بە گەڕان یان کلیک کردن لەسەر هەر شوێنێکی نەخشە، کەشوهەوای ئەو شوێنە ببینە',
+    'weather_hint': 'لەسەر نەخشە کلیک بکە بۆ دیاریکردنی شوێن، یان بگەڕێ',
+    'saved_places': 'شوێنە پاشەکەوتکراوەکان',
+    'saved_empty': 'هێشتا هیچ شوێنێک پاشەکەوت نەکراوە — لە کەشوهەوا ئەستێرە دابنێ',
     'nav_layers': 'لایەر',
     'nav_tools': 'ئامراز',
     'nav_mine': 'ناوەڕۆکی من',
@@ -130,7 +133,9 @@ const Map<String, Map<String, String>> _txt = {
     'rl_moderate': 'متوسط',
     'rl_heavy': 'غزير',
     'rl_extreme': 'شديد',
-    'weather_hint': 'ابحث أو اضغط على أي مكان في الخريطة لعرض طقس ذلك المكان',
+    'weather_hint': 'اضغط على الخريطة لتحديد مكان، أو ابحث',
+    'saved_places': 'الأماكن المحفوظة',
+    'saved_empty': 'لا أماكن محفوظة بعد — اضغط النجمة في الطقس',
     'nav_layers': 'الطبقات',
     'nav_tools': 'الأدوات',
     'nav_mine': 'محتواي',
@@ -229,7 +234,9 @@ const Map<String, Map<String, String>> _txt = {
     'rl_moderate': 'Moderate',
     'rl_heavy': 'Heavy',
     'rl_extreme': 'Extreme',
-    'weather_hint': "Search or tap anywhere on the map to see that place's weather",
+    'weather_hint': 'Tap the map to pick a place, or search',
+    'saved_places': 'Saved places',
+    'saved_empty': 'No saved places yet — tap the star in weather',
     'nav_layers': 'Layers',
     'nav_tools': 'Tools',
     'nav_mine': 'My Content',
@@ -426,6 +433,15 @@ class ShellTab extends ValueNotifier<int> {
   ShellTab._() : super(0);
   static final instance = ShellTab._();
   static const weather = 1;
+
+  /// شوێنێک کە بەکارهێنەر لەسەر نەخشە کلیکی لێکردووە (بۆ کەشوهەوا)
+  final ValueNotifier<LatLng?> picked = ValueNotifier<LatLng?>(null);
+
+  /// ناوی شوێنی پاشەکەوتکراو (null = ناو خۆکار دەدۆزرێتەوە)
+  final ValueNotifier<String?> pickedTitle = ValueNotifier<String?>(null);
+
+  /// قەبارەی پانێڵی کەشوهەوا: 0 بچووک، 1 ناوەند، 2 تەواو
+  final ValueNotifier<int> weatherSize = ValueNotifier<int>(1);
 }
 
 class MapShell extends StatefulWidget {
@@ -438,7 +454,9 @@ class MapShell extends StatefulWidget {
 class _MapShellState extends State<MapShell> {
   final ShellTab _shell = ShellTab.instance;
   _MineView _mine = _MineView.home;
-  bool _hintHidden = false;
+  bool _weatherShown = false;
+  String? _weatherTitle;
+  bool _startSearch = false;
   LatLng _weatherPoint = const LatLng(35.5, 44.0);
 
   int get _tab => _shell.value;
@@ -447,12 +465,60 @@ class _MapShellState extends State<MapShell> {
   void initState() {
     super.initState();
     unawaited(ContentStore.instance.load());
+    _shell.picked.addListener(_onPicked);
+    unawaited(SavedPlacesStore.instance.load());
+  }
+
+  @override
+  void dispose() {
+    _shell.picked.removeListener(_onPicked);
+    super.dispose();
+  }
+
+  void _onPicked() {
+    final p = _shell.picked.value;
+    if (p == null || !mounted) return;
+    setState(() {
+      _weatherPoint = p;
+      _weatherTitle = _shell.pickedTitle.value;
+      _weatherShown = true;
+      _startSearch = false;
+    });
+  }
+
+  /// شوێنێکی پاشەکەوتکراو: نەخشە دەچێتە سەری و کەشوهەواکەی دەکرێتەوە
+  void _openSaved(SavedPlace p) {
+    final point = LatLng(p.lat, p.lng);
+    MapSettings.instance.flyTo?.call(point, 12.0);
+    _shell.pickedTitle.value = p.title;
+    _shell.picked.value = null;
+    _shell.picked.value = point;
+  }
+
+  /// پانێڵی کەشوهەوا دادەخرێت، بەڵام تابەکە دەمێنێتەوە بۆ دیاریکردنی شوێنێکی نوێ
+  void _closeWeather() {
+    if (!mounted) return;
+    _shell.picked.value = null;
+    _shell.pickedTitle.value = null;
+    setState(() {
+      _weatherShown = false;
+      _weatherTitle = null;
+      _startSearch = false;
+    });
   }
 
   void _select(int index) {
     final next = (index == _tab) ? 0 : index;
     setState(() {
-      if (next == 1) _weatherPoint = MapSettings.instance.weatherCenter;
+      if (next == 1) {
+        // سەرەتا هیچ کەشوهەوایەک نیشان نادرێت تا شوێنێک دیاری بکرێت
+        _weatherPoint = MapSettings.instance.weatherCenter;
+        _weatherShown = false;
+        _startSearch = false;
+        _shell.picked.value = null;
+        _shell.pickedTitle.value = null;
+        _weatherTitle = null;
+      }
       if (next != 4) _mine = _MineView.home;
     });
     _shell.value = next;
@@ -493,9 +559,7 @@ class _MapShellState extends State<MapShell> {
         _ => null,
       };
       // کەشوهەوا: بە کیبۆرد هەموو بەرزیی بەردەست؛ بێ کیبۆرد ٦٢٪
-      final weatherHeight = keyboardOpen
-          ? (avail - 8).clamp(220.0, avail).toDouble()
-          : math.min(screen * 0.62, avail - 96);
+      final weatherHeight = math.max(220.0, math.min(screen * 0.6, avail - 96));
 
       return Directionality(
         textDirection: TextDirection.ltr,
@@ -503,27 +567,48 @@ class _MapShellState extends State<MapShell> {
           padding: EdgeInsets.fromLTRB(
               10, 0, 10, 8 + (keyboardOpen ? 0 : MediaQuery.paddingOf(context).bottom)),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            if (tab == 1 && !_hintHidden && !keyboardOpen)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _WeatherHint(
-                  text: _t(context, 'weather_hint'),
-                  onDismiss: () => setState(() => _hintHidden = true),
-                ),
+            // تابی کەشوهەوا: تا شوێنێک دیاری نەکرێت تەنیا نووارێکی بچووکی دیاریکردن
+            if (tab == 1 && !_weatherShown && !keyboardOpen)
+              AnimatedBuilder(
+                animation: SavedPlacesStore.instance,
+                builder: (context, _) {
+                  final favs = SavedPlacesStore.instance.favorites;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: _SavedStrip(
+                      label: _t(context, 'saved_places'),
+                      emptyText: _t(context, 'saved_empty'),
+                      places: favs,
+                      onTap: _openSaved,
+                    ),
+                  );
+                },
               ),
-            if (tab == 1)
+            if (tab == 1 && !_weatherShown && !keyboardOpen)
+              _PickBar(
+                text: _t(context, 'weather_hint'),
+                onSearch: () => setState(() {
+                  _weatherShown = true;
+                  _startSearch = true;
+                }),
+              ),
+            if (tab == 1 && _weatherShown)
               SizedBox(
-                height: weatherHeight,
+                height: keyboardOpen
+                    ? (avail - 8).clamp(220.0, avail).toDouble()
+                    : weatherHeight,
                 child: Directionality(
                   textDirection:
                       _isRtl(context) ? TextDirection.rtl : TextDirection.ltr,
                   child: Material(
                     type: MaterialType.transparency,
                     child: WeatherSheet(
-                      key: ValueKey(_weatherPoint),
+                      key: ValueKey('$_weatherPoint$_startSearch$_weatherTitle'),
                       point: _weatherPoint,
+                      title: _weatherTitle,
                       embedded: true,
-                      onClose: _collapse,
+                      startInSearch: _startSearch,
+                      onClose: _closeWeather,
                     ),
                   ),
                 ),
@@ -615,65 +700,148 @@ class RadarLegend extends StatelessWidget {
   }
 }
 
-class _WeatherHint extends StatelessWidget {
-  const _WeatherHint({required this.text, required this.onDismiss});
-  final String text;
-  final VoidCallback onDismiss;
+class _SavedStrip extends StatelessWidget {
+  const _SavedStrip({
+    required this.label,
+    required this.emptyText,
+    required this.places,
+    required this.onTap,
+  });
+  final String label;
+  final String emptyText;
+  final List<SavedPlace> places;
+  final ValueChanged<SavedPlace> onTap;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 6, 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            gradient: const LinearGradient(
-              colors: [Color(0xCC12384A), Color(0xCC0B1F31)],
-            ),
-            border: Border.all(color: _lineColor),
-            boxShadow: const [
-              BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 5)),
-            ],
-          ),
-          child: Directionality(
-            textDirection: _isRtl(context) ? TextDirection.rtl : TextDirection.ltr,
-            child: Row(children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF53D9E8), Color(0xFF3DB8D6)],
-                  ),
-                ),
-                child: const Icon(Icons.touch_app_rounded,
-                    size: 19, color: Color(0xFF062A33)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  text,
-                  style: const TextStyle(
+    return Directionality(
+      textDirection: _isRtl(context) ? TextDirection.rtl : TextDirection.ltr,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 0, 6, 4),
+          child: Row(children: [
+            const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFD166)),
+            const SizedBox(width: 5),
+            Text(label,
+                style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 12.5,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    shadows: [Shadow(color: Color(0xCC000000), blurRadius: 6)])),
+          ]),
+        ),
+        if (places.isEmpty)
+          Container(
+            height: 38,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            alignment: AlignmentDirectional.centerStart,
+            decoration: BoxDecoration(
+              color: const Color(0xCC0B1F19),
+              borderRadius: BorderRadius.circular(19),
+              border: Border.all(color: const Color(0x33FFD166)),
+            ),
+            child: Text(emptyText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500)),
+          )
+        else
+        SizedBox(
+          height: 38,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: places.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final p = places[i];
+              return GestureDetector(
+                onTap: () => onTap(p),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 170),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xE60B1F19),
+                    borderRadius: BorderRadius.circular(19),
+                    border: Border.all(color: const Color(0x47FFD166)),
                   ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.place_rounded,
+                        size: 15, color: Color(0xFFE5484D)),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(p.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
                 ),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                onPressed: onDismiss,
-                icon: const Icon(Icons.close_rounded,
-                    size: 18, color: Colors.white54),
-              ),
-            ]),
+              );
+            },
           ),
         ),
+      ]),
+    );
+  }
+}
+
+class _PickBar extends StatelessWidget {
+  const _PickBar({required this.text, required this.onSearch});
+  final String text;
+  final VoidCallback onSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsetsDirectional.fromSTEB(14, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: const Color(0xE60B1F19),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0x47FFD166)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 5)),
+        ],
+      ),
+      child: Directionality(
+        textDirection: _isRtl(context) ? TextDirection.rtl : TextDirection.ltr,
+        child: Row(children: [
+          const Icon(Icons.touch_app_rounded, size: 20, color: Color(0xFFFFD166)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onSearch,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                    colors: [Color(0xFFFFE08A), Color(0xFFF2B544)]),
+              ),
+              child: const Icon(Icons.search_rounded,
+                  size: 22, color: Color(0xFF2A1D00)),
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -1415,8 +1583,6 @@ class _LayersSheet extends StatelessWidget {
                 toggle('lay_names', s.names, s.setNames),
                 toggle('lay_borders', s.borders, s.setBorders),
                 toggle('lay_kri', s.kriBoundary, s.setKriBoundary),
-                toggle('lay_history', s.publicHistorySites,
-                    s.setPublicHistorySites),
                 toggle('lay_hillshade', s.hillshadeOverlay,
                     s.setHillshadeOverlay),
                 const SizedBox(height: 8),

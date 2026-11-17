@@ -32,9 +32,13 @@ class _PlaceLabels extends StatelessWidget {
 
 /// ناوێکی جوان: تێکستی سپی لەگەڵ هێڵی ڕەش بۆ ڕوونی
 class _Label extends StatelessWidget {
-  const _Label(this.text, this.kind);
+  const _Label(this.text, this.kind, {this.onDark = true});
   final String text;
   final String kind;
+
+  /// true: سەتەلایت/هایبرید (نووسینی ڕووناک + هالەی تاریک)
+  /// false: شەقام/تۆپۆ (نووسینی تاریک + هالەی سپی)، وەک نەخشەی ئاسایی
+  final bool onDark;
 
   @override
   Widget build(BuildContext context) {
@@ -56,13 +60,15 @@ class _Label extends StatelessWidget {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3
         ..strokeJoin = StrokeJoin.round
-        ..color = const Color(0xE6000000),
+        ..color = onDark ? const Color(0xE6000000) : const Color(0xF2FFFFFF),
     );
     final fill = TextStyle(
       fontSize: size,
       fontWeight: weight,
       height: 1.1,
-      color: big ? kGold : Colors.white,
+      color: onDark
+          ? (big ? kGold : Colors.white)
+          : (big ? const Color(0xFF8A5B00) : const Color(0xFF1B2A38)),
     );
 
     final direction = RegExp(r'[\u0600-\u06FF]').hasMatch(text)
@@ -72,12 +78,13 @@ class _Label extends StatelessWidget {
     return Column(mainAxisSize: MainAxisSize.min, children: [
       if (!big)
         Container(
-          width: kind == 'city' ? 9 : 7,
-          height: kind == 'city' ? 9 : 7,
+          width: kind == 'city' ? 8 : 6,
+          height: kind == 'city' ? 8 : 6,
           decoration: BoxDecoration(
             color: kGold,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.black87, width: 1),
+            border: Border.all(
+                color: onDark ? Colors.black87 : Colors.white, width: 1.2),
           ),
         ),
       const SizedBox(height: 2),
@@ -1083,9 +1090,6 @@ class _MapToolDock extends StatelessWidget {
           _DockTool(context.mt('layer_kri_boundary'), Icons.account_balance_outlined,
               settings.kriBoundary,
               () => settings.setKriBoundary(!settings.kriBoundary)),
-          _DockTool(context.mt('layer_history_sites'), Icons.history_edu_outlined,
-              settings.publicHistorySites,
-              () => settings.setPublicHistorySites(!settings.publicHistorySites)),
         ];
 
         return Material(
@@ -1535,13 +1539,6 @@ class _MapDrawerState extends State<MapDrawer> {
                           Navigator.pop(context);
                         },
                       ),
-                    _layerSwitch(
-                      icon: Icons.account_balance_outlined,
-                      title: context.mt('layer_history_sites'),
-                      subtitle: context.mt('layer_history_hint'),
-                      value: s.publicHistorySites,
-                      onChanged: s.setPublicHistorySites,
-                    ),
                   ]),
                 ),
 
@@ -1600,7 +1597,9 @@ class _DynamicPlaceLabels extends StatelessWidget {
   const _DynamicPlaceLabels({
     required this.places,
     required this.lang,
+    this.onDark = true,
   });
+  final bool onDark;
 
   String _localizedName(Map<String, dynamic> place) {
     final rawNames = place['names'];
@@ -1659,88 +1658,91 @@ class _DynamicPlaceLabels extends StatelessWidget {
       builder: (context, _) {
         final camera = MapCamera.of(context);
         final zoom = camera.zoom;
-        final int cap =
-            zoom < 11 ? 18 : (zoom < 13 ? 32 : (zoom < 15 ? 48 : 65));
 
-        final markers = <Marker>[];
-        final seen = <String>{};
-        final acceptedPoints = <LatLng>[];
-        final minimumLabelDistance = zoom < 11
-            ? 2600.0
-            : (zoom < 13 ? 1100.0 : (zoom < 15 ? 420.0 : 150.0));
-
-        void addLabel(LatLng point, String name, String kind) {
-          if (name.trim().isEmpty || markers.length >= cap) return;
-          final identity =
-              '${name.toLowerCase()}:${point.latitude.toStringAsFixed(3)}:${point.longitude.toStringAsFixed(3)}';
-          if (!seen.add(identity)) return;
-
-          // Prevent neighboring labels from stacking on top of each other.
-          for (final accepted in acceptedPoints) {
-            if (_calculateDistance(accepted, point) < minimumLabelDistance) {
-              return;
-            }
-          }
-          acceptedPoints.add(point);
-
-          markers.add(
-            Marker(
-              point: point,
-              width: 168,
-              height: 48,
-              alignment: Alignment.topCenter,
-              child: _Label(name, kind),
-            ),
-          );
-        }
-
-        // First use the offline place catalogue. It provides labels even
-        // before Overpass responds or when the device is offline.
+        // ── هەموو کاندیدەکان (کاتالۆگی ناوخۆیی + Overpass) ──
+        int rank(String kind) => switch (kind) {
+              'country' || 'province' || 'state' => 0,
+              'city' => 1,
+              'town' => 2,
+              'village' => 3,
+              _ => 4,
+            };
+        final candidates = <({LatLng point, String name, String kind})>[];
         for (final place in PlacesStore.instance.visible(
           camera.visibleBounds,
           zoom,
-          cap: cap,
+          cap: 120,
         )) {
           final name = place.nameFor(lang);
-          addLabel(
-            LatLng(place.lat, place.lng),
-            name,
-            place.kind,
-          );
+          if (name.trim().isEmpty) continue;
+          candidates.add((
+            point: LatLng(place.lat, place.lng),
+            name: name.trim(),
+            kind: place.kind,
+          ));
         }
-
-        // Then fill remaining space with current-area Overpass results.
-        final dynamicVisible = <Map<String, dynamic>>[];
         for (final place in places) {
           final lat = double.tryParse('${place['lat']}');
           final lon = double.tryParse('${place['lng']}');
           if (lat == null || lon == null) continue;
-
           final point = LatLng(lat, lon);
           if (!camera.visibleBounds.contains(point)) continue;
-
           final name = _localizedName(place);
           if (name.isEmpty) continue;
-
           final kind = (place['kind'] ?? 'place').toString();
           if (kind == 'public_history') continue;
-          dynamicVisible.add(<String, dynamic>{
-            'point': point,
-            'name': name,
-            'kind': kind,
-            'priority': _priority(kind),
-          });
+          candidates.add((point: point, name: name, kind: kind));
         }
+        // گەورەکان یەکەم؛ sort جێگیرە بۆیە ڕیزبەندی ناوخۆیی ماوەتەوە
+        final indexed = [for (var i = 0; i < candidates.length; i++) (i, candidates[i])]
+          ..sort((x, y) {
+            final r = rank(x.$2.kind).compareTo(rank(y.$2.kind));
+            return r != 0 ? r : x.$1.compareTo(y.$1);
+          });
 
-        dynamicVisible.sort((a, b) =>
-            (a['priority'] as int).compareTo(b['priority'] as int));
+        final cap = zoom < 9 ? 24 : (zoom < 12 ? 40 : (zoom < 14 ? 60 : 85));
+        final markers = <Marker>[];
+        final taken = <Rect>[];
+        final seenNames = <String, List<LatLng>>{};
 
-        for (final place in dynamicVisible) {
+        for (final entry in indexed) {
           if (markers.length >= cap) break;
-          addLabel(
-            place['point'] as LatLng,
-            place['name'] as String,
-            place['kind'] as String,
+          final p = entry.$2;
+          final key = p.name.toLowerCase();
+
+          // هەمان ناو لە نزیکیدا (کاتالۆگ + Overpass) تەنیا یەکجار
+          final same = seenNames[key];
+          if (same != null &&
+              same.any((q) => _calculateDistance(q, p.point) < 9000)) {
+            continue;
+          }
+
+          final big = p.kind == 'country' || p.kind == 'province' || p.kind == 'state';
+          final double size = big
+              ? 17
+              : p.kind == 'city'
+                  ? 15
+                  : p.kind == 'town'
+                      ? 13
+                      : 11.5;
+          final w = (p.name.length * size * 0.62).clamp(34.0, 160.0).toDouble();
+          final h = size * 1.35 + (big ? 0 : 10);
+
+          // ── پشکنینی پێکدادان لەسەر شاشە (پیکسێل)، نەک مەتر ──
+          final sp = camera.latLngToScreenPoint(p.point);
+          final rect = Rect.fromLTWH(sp.x - w / 2, sp.y, w, h).inflate(3);
+          if (taken.any(rect.overlaps)) continue;
+          taken.add(rect);
+          (seenNames[key] ??= <LatLng>[]).add(p.point);
+
+          markers.add(
+            Marker(
+              point: p.point,
+              width: 168,
+              height: 48,
+              alignment: Alignment.topCenter,
+              child: _Label(p.name, p.kind, onDark: onDark),
+            ),
           );
         }
 

@@ -14,7 +14,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'admin_panel_screen.dart';
 import 'elevation_service.dart';
 import 'main.dart'
-    show LangScope, Tr, LanguageChips, kBg1, kAccent, kGold, signOutAndClear;
+    show LangScope, Tr, LanguageChips, kBg1, kAccent, kGold, kPanelSoft, signOutAndClear;
 import 'places_store.dart';
 import 'poi_finder.dart';
 import 'tactical.dart';
@@ -478,7 +478,7 @@ enum BaseMap { satellite, hybrid, topo, street }
 String _baseUrl(BaseMap base, {required bool names, required bool borders}) {
   final style = switch (base) {
     BaseMap.satellite || BaseMap.hybrid =>
-      names || borders ? 'satellite-streets-v12' : 'satellite-v9',
+      borders ? 'satellite-streets-v12' : 'satellite-v9',
     BaseMap.topo => 'outdoors-v12',
     BaseMap.street => 'streets-v12',
   };
@@ -509,6 +509,14 @@ class MapSettings extends ChangeNotifier {
   void setWeatherCenter(LatLng point) => weatherCenter = point;
   MapSettings._();
   static final instance = MapSettings._();
+
+  /// ئایا تایلی نەخشەی هەڵبژێردراو خۆی ناوی تێدایە؟ (بۆ ڕێگری لە دووبارەبوونەوە)
+  bool get tilesHaveLabels => switch (base) {
+        BaseMap.topo => true,
+        BaseMap.street => MapboxConfig.isConfigured,
+        BaseMap.satellite || BaseMap.hybrid =>
+          MapboxConfig.isConfigured && borders,
+      };
 
   BaseMap base = BaseMap.street;
   bool names = true;
@@ -1480,8 +1488,9 @@ class _SatelliteMapState extends State<SatelliteMap> {
             } else if (_s.marking) {
               showTacEditor(context, p);
             } else if (ShellTab.instance.value == ShellTab.weather) {
-              // کەشوهەوا تەنیا لەسەر تابی «کەشوهەوا» کراوەیە
-              unawaited(showWeatherSheet(context, point: p));
+              // تابی کەشوهەوا: شوێنەکە دیاری دەکرێت و پانێڵەکە نوێ دەبێتەوە
+              ShellTab.instance.pickedTitle.value = null;
+              ShellTab.instance.picked.value = p;
             }
           },
           onPositionChanged: (camera, _) {
@@ -1539,24 +1548,6 @@ class _SatelliteMapState extends State<SatelliteMap> {
               const Duration(milliseconds: 80),
             ),
           ),
-          // Esri imagery has no place labels. Add a transparent label-only
-          // raster above it so Hybrid remains genuinely hybrid without a token.
-          // (هەم «هایبرید» و هەم «سەتەلایت» کاتێک ناوەکان چالاکن)
-          if ((base == BaseMap.hybrid ||
-                  (base == BaseMap.satellite && _s.names)) &&
-              !MapboxConfig.isConfigured)
-            TileLayer(
-              key: const ValueKey('hybrid-fallback-labels'),
-              // dark_only_labels: نووسینی سپی کە لەسەر وێنەی سەتەلایت ڕوون دەخوێندرێتەوە
-              urlTemplate: 'https://{s}.basemaps.cartocdn.com/'
-                  'rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              userAgentPackageName: 'kurdistan_map',
-              retinaMode: RetinaMode.isHighDensity(context),
-              maxNativeZoom: 19,
-              keepBuffer: 2,
-              tileDisplay: const TileDisplay.instantaneous(),
-            ),
           // Hillshade: raster relief overlay for the whole map (no API quota).
           if (_s.hillshadeOverlay)
             TileLayer(
@@ -1649,7 +1640,15 @@ class _SatelliteMapState extends State<SatelliteMap> {
                 borderColor: Colors.black87,
               ),
             ]),
-          if (_s.names) _DynamicPlaceLabels(places: _dynamicPlaces, lang: lang),
+          // تەنیا یەک سەرچاوەی ناو: ئەگەر تایلەکە خۆی ناوی تێدایە (topo، یان
+          // Mapbox)، ناوەکانی ئەپەکە نادرێن تا تێکەڵ نەبن.
+          if ((_s.names || base == BaseMap.hybrid) && !_s.tilesHaveLabels)
+            _DynamicPlaceLabels(
+              places: _dynamicPlaces,
+              lang: lang,
+              // سەتەلایت/هایبرید: نووسینی ڕووناک؛ شەقام/تۆپۆ: نووسینی تاریک
+              onDark: base == BaseMap.satellite || base == BaseMap.hybrid,
+            ),
           if (_s.publicHistorySites)
             _PublicHistoryMarkers(places: _dynamicPlaces, lang: lang),
           const PoiLayer(),
@@ -1743,6 +1742,33 @@ class _SatelliteMapState extends State<SatelliteMap> {
                 ? CityWeatherLayer(visible: _pillsN)
                 : const SizedBox.shrink(),
           ),
+          // نیشانەی ئەو شوێنەی بۆ کەشوهەوا دیاری کراوە
+          ValueListenableBuilder<int>(
+            valueListenable: ShellTab.instance,
+            builder: (context, tab, _) => tab != ShellTab.weather
+                ? const SizedBox.shrink()
+                : ValueListenableBuilder<LatLng?>(
+                    valueListenable: ShellTab.instance.picked,
+                    builder: (context, p, _) => p == null
+                        ? const SizedBox.shrink()
+                        : MarkerLayer(markers: [
+                            Marker(
+                              point: p,
+                              width: 44,
+                              height: 44,
+                              alignment: Alignment.topCenter,
+                              child: const Icon(Icons.location_on,
+                                  size: 40,
+                                  color: Color(0xFFE5484D),
+                                  shadows: [
+                                    Shadow(
+                                        color: Color(0x99000000),
+                                        blurRadius: 6)
+                                  ]),
+                            ),
+                          ]),
+                  ),
+          ),
           const RichAttributionWidget(
             alignment: AttributionAlignment.bottomLeft,
             attributions: [
@@ -1761,21 +1787,9 @@ class _SatelliteMapState extends State<SatelliteMap> {
           child: Center(child: Icon(Icons.add, color: kGold, size: 30)),
         ),
 
-      // ───── سەردێڕ + کارتی کەشوهەوای شار ─────
+      // ───── کارتی کەشوهەوای شار (سەردێڕی «نەخشەی کوردستان» لابرا) ─────
       Positioned(
-        top: 8,
-        left: 12,
-        right: 12,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: const MapTitleBar(),
-          ),
-        ),
-      ),
-      Positioned(
-        top: 116,
+        top: 62,
         right: 12,
         child: ValueListenableBuilder<int>(
           valueListenable: ShellTab.instance,
@@ -1786,11 +1800,11 @@ class _SatelliteMapState extends State<SatelliteMap> {
       ),
 
       if (_s.weatherRadar)
-        const Positioned(top: 116, left: 12, child: RadarLegend()),
+        const Positioned(top: 62, left: 12, child: RadarLegend()),
 
       // ───── خانەی گەڕان ─────
       Positioned(
-        top: 60,
+        top: 8,
         left: 12,
         right: 12,
         child: Align(
@@ -1907,7 +1921,7 @@ class _SatelliteMapState extends State<SatelliteMap> {
 
       if (NavStore.instance.me != null)
         Positioned(
-          top: 116,
+          top: 62,
           left: 12,
           right: 12,
           child: Align(

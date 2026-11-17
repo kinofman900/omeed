@@ -18,9 +18,6 @@ const kBg1 = Color(0xFF0B1B29);
 const kBg2 = Color(0xFF122C3D);
 const kAccent = Color(0xFF53D9E8);
 const kGold = Color(0xFFFFD166);
-const kPanel = Color(0xE8172B3A);
-const kPanelSoft = Color(0xCC1D3545);
-
 // ───────────────────────── زمان ─────────────────────────
 // ckb = سۆرانی، bdn = بادینی، ar = عەرەبی، en = ئینگلیزی
 const langNames = {
